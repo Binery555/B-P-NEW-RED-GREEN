@@ -1,14 +1,4 @@
 <!DOCTYPE html>
-<html lang="en" >
-<head>
-  <meta charset="UTF-8">
-  <title>Untitled</title>
-  
-
-</head>
-<body>
-<!-- partial:index.partial.html -->
-<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -229,19 +219,17 @@
 
     // ---------------------- Settings ----------------------
     let symbols = seedSymbols.slice();
-    const allowedLeverages = [10, 20, 50, 100];
     const tradeCount = 40; // number of mock positions to render
     const feedDiv = document.querySelector('.feed');
 
     // ---------------------- Core calcs (Linear USDT, Cross) ----------------------
-    const qtyFrom = (marginUsed, leverage, entry) => (leverage * marginUsed) / entry;          // opened qty (pre-quantize)
-    const upnlLong  = (mark, entry, qty) => (mark - entry) * qty;                              // Long uPnL
-    const upnlShort = (mark, entry, qty) => (entry - mark) * qty;                              // Short uPnL
-    const roiPct = (pnl, usedMargin) => (pnl / usedMargin) * 100;                              // ROI%
-    const maintenance = (mmr, mark, qty) => mmr * mark * qty;                                  // Maintenance req (USDT)
-    const marginBalance = (effectiveMargin, uPnL) => effectiveMargin + uPnL;                   // Equity bucket
+    const qtyFrom = (marginUsed, leverage, entry) => (leverage * marginUsed) / entry;
+    const upnlLong  = (mark, entry, qty) => (mark - entry) * qty;
+    const upnlShort = (mark, entry, qty) => (entry - mark) * qty;
+    const roiPct = (pnl, usedMargin) => (pnl / usedMargin) * 100;
+    const maintenance = (mmr, mark, qty) => mmr * mark * qty;
+    const marginBalance = (effectiveMargin, uPnL) => effectiveMargin + uPnL;
 
-    // Approx liquidation (cross) — Long
     function liqPriceLong(entry, leverage, mmr, marginUsed, effectiveMargin) {
       const Q = (leverage * marginUsed) / entry;
       const denom = Q * (1 - mmr);
@@ -251,7 +239,6 @@
       if (!isFinite(P) || P <= 0) return null;
       return P;
     }
-    // Approx liquidation (cross) — Short
     function liqPriceShort(entry, leverage, mmr, marginUsed, effectiveMargin) {
       const Q = (leverage * marginUsed) / entry;
       const denom = Q * (1 + mmr);
@@ -261,7 +248,6 @@
       if (!isFinite(P) || P <= 0) return null;
       return P;
     }
-
     const marginRatioPct = (maint, mBal) => (mBal <= 0 ? 100 : (maint / mBal) * 100);
 
     // ---------------------- UI helpers ----------------------
@@ -493,8 +479,6 @@
         const effMargin = usedMargin * (1.5 + Math.random() * 2.5);
         const mmr = getMaintRate(sym);
 
-        // trendPct was used only for the removed chip; no need now.
-
         const panelState = createPanel({
           sym, leverage, entry, mark: liveMark, usedMargin, effMargin, mmr,
           qty, notionalUSDT, side
@@ -524,7 +508,7 @@
 
           for (const t of trades) {
             if (t.sym === sym) {
-              t.mark = mp; // Binance’s live push speed/values
+              t.mark = mp; // Binance live push
               renderTrade(t);
             }
           }
@@ -552,9 +536,5 @@
       window.trades = trades;
     })();
   </script>
-</body>
-</html>
-<!-- partial -->
-  
 </body>
 </html>

@@ -33,6 +33,7 @@
     .header-toggle button { flex: 1; padding: 4px 6px; border: none; background: transparent; color: var(--text-secondary); font-size: 11px; cursor: pointer; }
     .header-toggle .active { background: var(--secondary-bg); color: var(--text-primary); font-weight: 500; }
 
+    /* shifted left/right per your earlier layout */
     nav.main-nav, .sub-toggle, .section-toggle { transform: translateX(0.1cm); }
     nav.main-nav { display: flex; margin: 0 12px; background: var(--panel-bg); padding: 4px 0; }
     nav.main-nav a { margin-right: 16px; text-decoration: none; color: var(--text-secondary); font-size: 13px; padding: 8px 0; white-space: nowrap; }
@@ -108,6 +109,8 @@
     <div>Assets</div>
   </div>
 
+  <!-- Entry Window UI removed -->
+
   <div class="feed"></div>
 
   <script>
@@ -153,7 +156,9 @@
 
     // ---------------------- Market meta (tick & step sizes) ----------------------
     const marketMeta = Object.create(null);
+    let metaLoaded = false;
     async function loadExchangeMeta() {
+      if (metaLoaded) return;
       const url = 'https://fapi.binance.com/fapi/v1/exchangeInfo';
       const res = await fetch(url);
       const json = await res.json();
@@ -181,6 +186,7 @@
           priceDp: dpFromTick(tickSize)
         };
       }
+      metaLoaded = true;
     }
     const getMeta = (sym) => marketMeta[sym] || { tickSize: '0.01', stepSize: '0.001', minQty: 0, priceDp: 2 };
     function formatPrice(sym, x) {
@@ -222,6 +228,10 @@
     const tradeCount = 40; // number of mock positions to render
     const feedDiv = document.querySelector('.feed');
 
+    // Fixed entry window (months)
+    const ENTRY_MONTHS = 6;
+    const JITTER_DAYS = 5; // entry shifts ±5d on each refresh
+
     // ---------------------- Core calcs (Linear USDT, Cross) ----------------------
     const qtyFrom = (marginUsed, leverage, entry) => (leverage * marginUsed) / entry;
     const upnlLong  = (mark, entry, qty) => (mark - entry) * qty;
@@ -259,7 +269,7 @@
     };
 
     // Build one trade panel element (trend tag removed)
-    function createPanel({ sym, leverage, entry, mark, usedMargin, effMargin, mmr, qty, notionalUSDT, side }) {
+    function createPanel({ sym, leverage, entry, mark, usedMargin, effMargin, mmr, qty, notionalUSDT, side, modeLabel }) {
       const pnl = side === 'LONG' ? upnlLong(mark, entry, qty) : upnlShort(mark, entry, qty);
       const roi = roiPct(pnl, usedMargin);
       const maint = maintenance(mmr, mark, qty);
@@ -278,7 +288,7 @@
           ${sideIcon}
           <span class="symbol">${sym}</span>
           <span class="tag">PERP</span>
-          <span class="tag">Cross ${leverage}×</span>
+          <span class="tag">${modeLabel} ${leverage}×</span>
           <span class="exclamations">${meterBars()}</span>
           <i class="fas fa-share-alt share"></i>
         </div>
@@ -364,69 +374,49 @@
       liqEl.textContent = (liq === null) ? '—' : formatPrice(t.sym, liq);
     }
 
-    // ---------------------- 6M Entry fetch (Mark Price Klines) ----------------------
-    function sixMonthsAgoMs() {
+    // ---------------------- Entry fetch helpers (fixed 6M with jitter) ----------------------
+    function monthsAgoMs(months) {
       const d = new Date();
-      d.setMonth(d.getMonth() - 6);
+      d.setMonth(d.getMonth() - months);
       d.setHours(0, 0, 0, 0);
       return d.getTime();
     }
 
-    async function fetchSixMonthMarkClose(sym, startMs) {
-      // Try markPriceKlines first (closest to mark)
-      try {
-        const url = `https://fapi.binance.com/fapi/v1/markPriceKlines?symbol=${sym}&interval=1d&startTime=${startMs - 2*24*3600*1000}&limit=2`;
-        const res = await fetch(url);
-        if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data) && data.length > 0) {
-            const k = data[0];
-            const close = parseFloat(k[4]); // [openTime, open, high, low, close, ...]
-            if (isFinite(close)) return close;
-          }
-        }
-      } catch (e) {}
+    async function fetchWindowEntryClose(sym, months, jitterDays = 5) {
+      const base = monthsAgoMs(months);
+      const delta = (Math.floor(Math.random() * (2 * jitterDays + 1)) - jitterDays) * 24 * 3600 * 1000;
+      const startMs = base + delta;
 
-      // Fallback to continuousKlines (PERPETUAL)
-      try {
-        const url = `https://fapi.binance.com/fapi/v1/continuousKlines?pair=${sym}&contractType=PERPETUAL&interval=1d&startTime=${startMs - 2*24*3600*1000}&limit=2`;
-        const res = await fetch(url);
-        if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data) && data.length > 0) {
-            const k = data[0];
-            const close = parseFloat(k[4]);
-            if (isFinite(close)) return close;
-          }
-        }
-      } catch (e) {}
+      const tryEndpoints = [
+        `https://fapi.binance.com/fapi/v1/markPriceKlines?symbol=${sym}&interval=1d&startTime=${startMs - 2*24*3600*1000}&limit=2`,
+        `https://fapi.binance.com/fapi/v1/continuousKlines?pair=${sym}&contractType=PERPETUAL&interval=1d&startTime=${startMs - 2*24*3600*1000}&limit=2`,
+        `https://fapi.binance.com/fapi/v1/klines?symbol=${sym}&interval=1d&startTime=${startMs - 2*24*3600*1000}&limit=2`
+      ];
 
-      // Ultimate fallback to futures klines (last resort)
-      try {
-        const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${sym}&interval=1d&startTime=${startMs - 2*24*3600*1000}&limit=2`;
-        const res = await fetch(url);
-        if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data) && data.length > 0) {
-            const k = data[0];
-            const close = parseFloat(k[4]);
-            if (isFinite(close)) return close;
+      for (const url of tryEndpoints) {
+        try {
+          const res = await fetch(url);
+          if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data) && data.length > 0) {
+              const k = data[0];
+              const close = parseFloat(k[4]);
+              if (isFinite(close)) return close;
+            }
           }
-        }
-      } catch (e) {}
-
+        } catch(e) {}
+      }
       return null;
     }
 
-    async function loadSixMonthEntryMap(symbolList) {
-      const start = sixMonthsAgoMs();
+    async function loadEntryMap(symbolList, months) {
       const entryMap = Object.create(null);
       const unique = [...new Set(symbolList)];
-      const batch = 8; // limit concurrency to be gentle on API
+      const batch = 8; // limit concurrency
       for (let i = 0; i < unique.length; i += batch) {
         const chunk = unique.slice(i, i + batch);
         await Promise.all(chunk.map(async (sym) => {
-          const close = await fetchSixMonthMarkClose(sym, start);
+          const close = await fetchWindowEntryClose(sym, months, JITTER_DAYS);
           if (isFinite(close)) entryMap[sym] = close;
         }));
       }
@@ -434,9 +424,10 @@
     }
 
     // ---------------------- Live init + speed-synced updates ----------------------
-    const trades = [];
+    let trades = [];
+    let ws = null;
 
-    async function seedWithFuturesMark6M() {
+    async function seedWithFuturesMarks(months) {
       await loadExchangeMeta();
       symbols = symbols.filter(s => !!marketMeta[s]);
 
@@ -450,22 +441,26 @@
       // We'll only need entries for the first N symbols we will render
       const plannedSyms = [];
       for (let i = 0; i < tradeCount; i++) plannedSyms.push(symbols[i % symbols.length]);
-      const entryMap = await loadSixMonthEntryMap(plannedSyms);
+      const entryMap = await loadEntryMap(plannedSyms, months);
+
+      const newTrades = [];
+      const feedDiv = document.querySelector('.feed');
+      feedDiv.innerHTML = '';
 
       for (let i = 0; i < tradeCount; i++) {
         const sym = symbols[i % symbols.length];
         const liveMark = markMap[sym];
         if (!isFinite(liveMark)) continue;
 
-        const sixMEntryRaw = entryMap[sym];
-        if (!isFinite(sixMEntryRaw)) continue;
+        const entryRaw = entryMap[sym];
+        if (!isFinite(entryRaw)) continue;
 
         const leverage = [10, 20, 50, 100][Math.floor(Math.random() * 4)];
 
-        // Entry = 6 months ago mark close, quantized to tick
-        const entry = quantizeToTick(sixMEntryRaw, getMeta(sym).tickSize);
+        // Entry = close from selected window, quantized to tick
+        const entry = quantizeToTick(entryRaw, getMeta(sym).tickSize);
 
-        // Direction so that 6M trend "wins": if market went up -> LONG; if down -> SHORT
+        // Direction so that window trend "wins": if market went up -> LONG; if down -> SHORT
         const side = (liveMark >= entry) ? 'LONG' : 'SHORT';
 
         const usedMargin = 50 + Math.random() * 950; // 50-1000 USDT
@@ -476,21 +471,24 @@
         if (qty < m.minQty) qty = m.minQty;
 
         const notionalUSDT = entry * qty;
-        const effMargin = usedMargin * (1.5 + Math.random() * 2.5);
+        const effMargin = usedMargin * (1.5 + Math.random() * 2.5); // simulate wallet balance impact for margin ratio
         const mmr = getMaintRate(sym);
 
         const panelState = createPanel({
           sym, leverage, entry, mark: liveMark, usedMargin, effMargin, mmr,
-          qty, notionalUSDT, side
+          qty, notionalUSDT, side, modeLabel: 'Cross'
         });
-        trades.push(panelState);
+        newTrades.push(panelState);
         feedDiv.appendChild(panelState.node);
       }
+
+      trades = newTrades; // swap atomically so WS uses the latest list
     }
 
     function connectFuturesMarkWS() {
       const WS_URL = 'wss://fstream.binance.com/ws/!markPrice@arr';
-      let ws = new WebSocket(WS_URL);
+      if (ws) { try { ws.close(); } catch {} ws = null; }
+      ws = new WebSocket(WS_URL);
 
       ws.onopen = () => console.log('[WS] Connected to Futures mark price stream');
 
@@ -527,8 +525,8 @@
 
     (async function init() {
       try {
-        await seedWithFuturesMark6M(); // 6M entry + proper precisions
-        connectFuturesMarkWS();        // live mark updates at Binance speed
+        await seedWithFuturesMarks(ENTRY_MONTHS); // fixed 6M; entry jitters each reload
+        connectFuturesMarkWS();                   // live mark updates
       } catch (e) {
         console.error('Init failed:', e);
       }
